@@ -4,6 +4,8 @@
 
 #include <Arduino.h>
 #include <Update.h>
+#include "custom\WiFiLogic.h"
+#include "custom\Data.h"
 
 #ifdef ESP32
 
@@ -959,6 +961,86 @@ void handleNotFound(MongooseHttpServerRequest *request)
   }
 }
 
+void handleSensors(MongooseHttpServerRequest *request) {
+
+  MongooseHttpServerResponseStream *response;
+  if(false == requestPreProcess(request, response, CONTENT_TYPE_JSON)) {
+    return;
+  }
+
+	char temp[200];
+	char uptime[15]; WiFiLogic.formatUptime(uptime);
+	char time[20]; WiFiLogic.formatCurrentDateTimeToDisplay(time);
+	char lastCorrTime[20]; WiFiLogic.formatDateTimeToDisplay(lastCorrTime, Data.m_lastCorrTime);
+	char current[7]; WiFiLogic.sprintf_P_Float(current, Data.m_current.m_currentValue);
+	char temperatureIn[7]; WiFiLogic.sprintf_P_Float(temperatureIn, Data.m_temperatureIn.m_currentValue);
+	char temperatureInMax[7]; WiFiLogic.sprintf_P_Float(temperatureInMax, Data.m_temperatureInMax);
+
+	sprintf_P(temp, 
+		PSTR("{\"t\":%ld,\"e\":%ld,\"p\":%d,\"c\":%s,\"v\":%d,\"tIn\":%s,\"tInMax\":%s,\"uptime\":\"%s\",\"time\":\"%s\",\"lastCorTime\":\"%s\",\"lastCorValue\":\"%d\"}"),
+		Data.m_energyTotal, Data.m_energy, Data.m_power.m_currentValue, current, Data.m_voltage.m_currentValue, temperatureIn, temperatureInMax,  
+		uptime, time, lastCorrTime, Data.m_lastCorrValue);
+
+	Serial.print(F("Sensors: ")); Serial.println(temp);
+
+  response->setCode(200);
+  response->print(temp);
+  request->send(response);
+}
+
+void handleSarray(MongooseHttpServerRequest *request) {
+  MongooseHttpServerResponseStream *response;
+  if(false == requestPreProcess(request, response, CONTENT_TYPE_JSON)) {
+    return;
+  }
+	char w[5];
+
+	String str = PSTR("{\"svalues\":[");
+
+	for (int i = 0; i < S_ARRAY_SIZE - 1; i++)
+	{
+		sprintf_P(w, PSTR("%d"), Data.m_sArray[i]);
+		str += w;
+		str += ",";
+	}
+
+	sprintf_P(w, PSTR("%d"), Data.m_sArray[S_ARRAY_SIZE - 1]);
+	str += w;
+
+	str += "]}";
+
+  response->setCode(200);
+  response->print(str);
+  request->send(response);
+}
+
+void handleLog(MongooseHttpServerRequest *request) {
+  MongooseHttpServerResponseStream *response;
+  if(false == requestPreProcess(request, response, CONTENT_TYPE_JSON)) {
+    return;
+  }
+	char temp[20];
+	String res;
+
+	for (int i = 0; i < LOG_SIZE; i++)
+	{
+		if (Data.m_log[i].m_dateTime == 0)
+		{
+			continue;
+		}
+
+		WiFiLogic.formatDateTimeToDisplay(temp, Data.m_log[i].m_dateTime);
+
+		res += temp;
+		res += " ";
+		res += Data.m_log[i].m_data;
+		res += "\r\n";
+	}
+  response->setCode(200);
+  response->print(res);
+  request->send(response);
+}
+
 /*
 void onWsEvent(AsyncWebSocket * server, AsyncWebSocketClient *client, AwsEventType type, void *arg, uint8_t *data, size_t len) {
   if(type == WS_EVT_CONNECT) {
@@ -1021,6 +1103,9 @@ web_server_setup() {
   server.on("/apoff$", handleAPOff);
   server.on("/divertmode$", handleDivertMode);
   server.on("/emoncms/describe$", handleDescribe);
+  server.on("/sensors$", handleSensors);
+  server.on("/logs$", handleLog);
+  server.on("/sarray$", handleSarray);
 
   // Simple Firmware Update Form
   server.on("/update$")->

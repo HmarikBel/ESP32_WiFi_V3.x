@@ -43,6 +43,7 @@
 #include "openevse.h"
 #include "root_ca.h"
 #include "hal.h"
+#include "custom\custommain.h"
 
 #include "RapiSender.h"
 
@@ -111,6 +112,8 @@ loop() {
 #endif
   rapiSender.loop();
   divert_current_loop();
+
+  customLoop();
 
   if(OPENEVSE_STATE_STARTING != state &&
      OPENEVSE_STATE_INVALID != state)
