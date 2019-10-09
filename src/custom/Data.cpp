@@ -12,10 +12,13 @@ void DataClass::init()
 	m_power.m_currentValue = 0;
 	m_current.m_currentValue = 0;
 	m_voltage.m_currentValue = 0;
-	m_temperatureIn.m_currentValue = 0;
+	m_temperature[0].m_currentValue = 0;
+	m_temperature[1].m_currentValue = 0;
+	m_temperature[2].m_currentValue = 0;
 
-	m_temperatureInMax = 0;
-
+	m_temperatureMax[0] = 0;
+	m_temperatureMax[1] = 0;
+	m_temperatureMax[2] = 0;
 
 	m_lastCorrTime = 0;
 	m_lastCorrValue = 0;

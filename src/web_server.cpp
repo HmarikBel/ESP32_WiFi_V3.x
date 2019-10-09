@@ -968,23 +968,29 @@ void handleSensors(MongooseHttpServerRequest *request) {
     return;
   }
 
-	char temp[200];
 	char uptime[15]; WiFiLogic.formatUptime(uptime);
 	char time[20]; WiFiLogic.formatCurrentDateTimeToDisplay(time);
-	char lastCorrTime[20]; WiFiLogic.formatDateTimeToDisplay(lastCorrTime, Data.m_lastCorrTime);
-	char current[7]; WiFiLogic.sprintf_P_Float(current, Data.m_current.m_currentValue);
-	char temperatureIn[7]; WiFiLogic.sprintf_P_Float(temperatureIn, Data.m_temperatureIn.m_currentValue);
-	char temperatureInMax[7]; WiFiLogic.sprintf_P_Float(temperatureInMax, Data.m_temperatureInMax);
 
-	sprintf_P(temp, 
-		PSTR("{\"t\":%ld,\"e\":%ld,\"p\":%d,\"c\":%s,\"v\":%d,\"tIn\":%s,\"tInMax\":%s,\"uptime\":\"%s\",\"time\":\"%s\",\"lastCorTime\":\"%s\",\"lastCorValue\":\"%d\"}"),
-		Data.m_energyTotal, Data.m_energy, Data.m_power.m_currentValue, current, Data.m_voltage.m_currentValue, temperatureIn, temperatureInMax,  
-		uptime, time, lastCorrTime, Data.m_lastCorrValue);
+  String res = "{";
 
-	Serial.print(F("Sensors: ")); Serial.println(temp);
+	res = WiFiLogicClass::addParam(res, "uptime", uptime, true);
+	res = WiFiLogicClass::addParam(res, "time", time);
+  res = WiFiLogicClass::addParam(res, "t", Data.m_energyTotal);
+  res = WiFiLogicClass::addParam(res, "e", Data.m_energy);
+  res = WiFiLogicClass::addParam(res, "p", Data.m_power.m_currentValue);
+  res = WiFiLogicClass::addParam(res, "c", Data.m_current.m_currentValue);
+  res = WiFiLogicClass::addParam(res, "v", Data.m_voltage.m_currentValue);
+  res = WiFiLogicClass::addParam(res, "t1", Data.m_temperature[0].m_currentValue);
+  res = WiFiLogicClass::addParam(res, "t1m", Data.m_temperatureMax[0]);
+  res = WiFiLogicClass::addParam(res, "t2", Data.m_temperature[1].m_currentValue);
+  res = WiFiLogicClass::addParam(res, "t2m", Data.m_temperatureMax[1]);
+  res = WiFiLogicClass::addParam(res, "t3", Data.m_temperature[2].m_currentValue);
+  res = WiFiLogicClass::addParam(res, "t3m", Data.m_temperatureMax[2]);
+
+  res += '}';
 
   response->setCode(200);
-  response->print(temp);
+  response->print(res);
   request->send(response);
 }
 

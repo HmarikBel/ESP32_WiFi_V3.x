@@ -36,12 +36,12 @@ public:
 	SendDataInt m_power;
 	SendDataInt m_voltage;
 	SendDataFloat m_current;
-	SendDataFloat m_temperatureIn;
+	SendDataFloat m_temperature[3];
 
 	long m_energyTotal;
 	long m_energy;
 
-	float m_temperatureInMax;
+	float m_temperatureMax[3];
 
 	unsigned long m_lastCorrTime;
 	int m_lastCorrValue;
