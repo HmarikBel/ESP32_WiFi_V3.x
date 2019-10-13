@@ -4,7 +4,7 @@
 #include "openevse.h"
 #include "input.h"
 
-#define LCD_MAX_LEN 16
+#define LCD_MAX_LEN 20
 
 extern RapiSender rapiSender;
 

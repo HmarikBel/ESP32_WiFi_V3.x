@@ -10,7 +10,7 @@
 
 #ifndef RAPI_PORT
 #ifdef ESP32
-#define RAPI_PORT Serial1
+#define RAPI_PORT Serial2
 #elif defined(ESP8266)
 #define RAPI_PORT Serial
 #else

@@ -216,7 +216,7 @@ String WiFiLogicClass::addParam(String data, String paramName, String value, boo
 
 String WiFiLogicClass::addParam(String data, String paramName, float value, bool first)
 {
-	char t[7]; sprintf_P_Float(t, value);
+	char t[10]; sprintf_P_Float(t, value);
 	return addParamInt(data, paramName, String(t), first);
 }
 
