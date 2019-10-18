@@ -11,6 +11,7 @@ unsigned long gNextReadW = 0;
 
 extern RapiSender rapiSender;
 
+
 void readData()
 {
 	unsigned long tmpNow = millis();
@@ -32,9 +33,20 @@ void readData()
 
 					Data.addPower(Data.m_power.m_currentValue);
 
-					WiFiLogic.SendIfNecessary(COUNTER_ID_CHARGER_POWER, &Data.m_power, 200, SEND_DATA_MIN, SEND_DATA_MAX);
-					WiFiLogic.SendIfNecessary(COUNTER_ID_CHARGER_VOLTAGE, &Data.m_voltage, 2, SEND_DATA_MIN, SEND_DATA_MAX);
-					WiFiLogic.SendIfNecessary(COUNTER_ID_CHARGER_CURRENT, &Data.m_current, 1, SEND_DATA_MIN, SEND_DATA_MAX);
+					if(Data.m_power.m_currentValue >= 0)
+					{
+						WiFiLogic.SendIfNecessary(COUNTER_ID_CHARGER_POWER, &Data.m_power, 200, SEND_DATA_MIN, SEND_DATA_MAX);
+					}
+					
+					if(Data.m_voltage.m_currentValue > 0)
+					{
+						WiFiLogic.SendIfNecessary(COUNTER_ID_CHARGER_VOLTAGE, &Data.m_voltage, 2, SEND_DATA_MIN, SEND_DATA_MAX);
+					}
+					
+					if(Data.m_current.m_currentValue >= 0)
+					{
+						WiFiLogic.SendIfNecessary(COUNTER_ID_CHARGER_CURRENT, &Data.m_current, 1, SEND_DATA_MIN, SEND_DATA_MAX);
+					}
 				} 
 			}
 			else {
@@ -51,13 +63,26 @@ void readData()
 			{
 				if(rapiSender.getTokenCnt() >= 4)
 				{
-					Data.m_temperature[0].m_currentValue = strtol(rapiSender.getToken(1), NULL, 10) / 10.0;
-					Data.m_temperature[1].m_currentValue = strtol(rapiSender.getToken(2), NULL, 10) / 10.0;
-					Data.m_temperature[2].m_currentValue = strtol(rapiSender.getToken(3), NULL, 10) / 10.0;
+					float t1 = strtol(rapiSender.getToken(1), NULL, 10) / 10.0;
+					float t2 = strtol(rapiSender.getToken(2), NULL, 10) / 10.0;
+					float t3 = strtol(rapiSender.getToken(3), NULL, 10) / 10.0;
 
-					WiFiLogic.SendIfNecessary(COUNTER_ID_CHARGER_TEMPERATURE, &Data.m_temperature[0], 1, SEND_DATA_MIN, SEND_DATA_MAX);
-					WiFiLogic.SendIfNecessary(COUNTER_ID_CHARGER_TEMPERATURE + 1, &Data.m_temperature[1], 1, SEND_DATA_MIN, SEND_DATA_MAX);
-					WiFiLogic.SendIfNecessary(COUNTER_ID_CHARGER_TEMPERATURE + 2, &Data.m_temperature[2], 1, SEND_DATA_MIN, SEND_DATA_MAX);
+					if(t1 > 100 || t2 > 100 || t3 > 100 )
+					{
+						return;  // incorrect readings
+					}
+
+					Data.m_temperature[0].m_currentValue = t1;
+					Data.m_temperature[1].m_currentValue = t2;
+					Data.m_temperature[2].m_currentValue = t3;
+
+					for(int i=0; i<3; i++)
+					{
+						if(Data.m_temperature[i].m_currentValue != -1)
+						{
+							WiFiLogic.SendIfNecessary(COUNTER_ID_CHARGER_TEMPERATURE + i, &Data.m_temperature[i], 1, SEND_DATA_MIN, SEND_DATA_MAX);
+						}
+					}
 				} 
 			}
 			else {
