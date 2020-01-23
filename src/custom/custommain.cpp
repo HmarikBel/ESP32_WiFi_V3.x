@@ -5,12 +5,19 @@
 #include "defines.h"
 #include "RapiSender.h"
 
+#include "EnergyLimitScreen.h"
+
 
 unsigned long gNextTimeCorrection = 0;
 unsigned long gNextReadW = 0;
 
 extern RapiSender rapiSender;
 
+AiEsp32RotaryEncoder gRotaryEncoder = AiEsp32RotaryEncoder(ROTARY_ENCODER_A_PIN, ROTARY_ENCODER_B_PIN, ROTARY_ENCODER_BUTTON_PIN, ROTARY_ENCODER_VCC_PIN);
+
+byte gCurScreenIndex = INDEX_NO_SCREEN;
+byte gPrevScreenIndex = INDEX_NO_SCREEN;
+BaseScreen* gpCurScreen = NULL;
 
 void readData()
 {
@@ -111,6 +118,93 @@ void readData()
 	}
 }
 
+void customSetup() {
+
+	Serial.begin(115200);
+
+	//we must initialize rorary encoder 
+	gRotaryEncoder.begin();
+	gRotaryEncoder.setup([]{gRotaryEncoder.readEncoder_ISR();});
+	//optionally we can set boundaries and if values should cycle or not
+	gRotaryEncoder.setBoundaries(1, 20, false); //minValue, maxValue, cycle values (when max go to min and vice versa)
+	gRotaryEncoder.disable();
+}
+
+
+
+void rotary_loop() {
+
+	//lets see if anything changed
+	int16_t encoderDelta = gRotaryEncoder.encoderChanged();
+	
+	//optionally we can ignore whenever there is no change
+	if (encoderDelta == 0) return;
+	
+	//for some cases we only want to know if value is increased or decreased (typically for menu items)
+	if (encoderDelta>0) Serial.print("+");
+	if (encoderDelta<0) Serial.print("-");
+
+	//for other cases we want to know what is current value. Additionally often we only want if something changed
+	//example: when using rotary encoder to set termostat temperature, or sound volume etc
+	
+	//if value is changed compared to our last read
+	if (encoderDelta!=0) {
+		//now we need current value
+		int16_t encoderValue = gRotaryEncoder.readEncoder();
+		//process new value. Here is simple output.
+		Serial.print("Value: ");
+		Serial.println(encoderValue);
+	} 
+	
+}
+
+char* createState(int index)
+{
+	switch (index)
+	{
+		case INDEX_ENERGY_LIMIT_SCREEN: 
+		return reinterpret_cast<char*>(new EnergyLimitScreen(INDEX_ENERGY_LIMIT_SCREEN, INDEX_NO_SCREEN, INDEX_NO_SCREEN));
+
+		default: return NULL;
+	}
+
+}
+
+void processScreen()
+{
+	uint8_t key = Keyboard.getKey();
+	if(key > KEY_PRESSED)
+	{
+		if(gCurScreenIndex == INDEX_NO_SCREEN)
+		{
+			gCurScreenIndex = INDEX_ENERGY_LIMIT_SCREEN;
+			key = 0;
+		}
+	}
+
+	if (gPrevScreenIndex != gCurScreenIndex)
+	{
+		if (gpCurScreen != NULL)
+		{
+			delete gpCurScreen;
+			gRotaryEncoder.disable();
+		}
+		gpCurScreen = (BaseScreen*)createState(gCurScreenIndex);
+		if (gpCurScreen != NULL)
+		{
+			gpCurScreen->Init();
+			gRotaryEncoder.enable();
+		}
+		gPrevScreenIndex = gCurScreenIndex;
+	}
+
+	if (gpCurScreen != NULL)
+	{
+		gCurScreenIndex = gpCurScreen->Process(key);
+	}
+}
+
+
 void customLoop()
 {
 	//int tmp;
@@ -127,4 +221,13 @@ void customLoop()
 	}
 
 	readData();
+
+	//in loop call your custom function which will process rotary encoder values
+	rotary_loop();
+
+	processScreen();
 }
+
+
+
+

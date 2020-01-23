@@ -16,3 +16,10 @@
 
 #define SEND_DATA_MIN					60000
 #define SEND_DATA_MAX					600000
+
+#define SCREEN_TIMEOUT		    	30000
+#define INDEX_NO_SCREEN	    	    0
+#define INDEX_ENERGY_LIMIT_SCREEN	1
+#define INDEX_SCREEN_MAX		    1
+
+#define KEYBOARD_PIN                25
