@@ -17,9 +17,11 @@ class EnergyLimitScreen : public BaseScreen
 {
 private:
 
-	byte m_limit = 0;
+	int m_limit = 0;
 
-	void Show();
+	bool m_writeDone = false;
+
+	void Show(bool displayNow);
 
 	void formatValue(char* buffer, float value);
 public:

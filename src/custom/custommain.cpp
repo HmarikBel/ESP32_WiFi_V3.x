@@ -5,6 +5,8 @@
 #include "defines.h"
 #include "RapiSender.h"
 
+#include "debug.h"
+
 #include "EnergyLimitScreen.h"
 
 
@@ -13,7 +15,7 @@ unsigned long gNextReadW = 0;
 
 extern RapiSender rapiSender;
 
-AiEsp32RotaryEncoder gRotaryEncoder = AiEsp32RotaryEncoder(ROTARY_ENCODER_A_PIN, ROTARY_ENCODER_B_PIN, ROTARY_ENCODER_BUTTON_PIN, ROTARY_ENCODER_VCC_PIN);
+AiEsp32RotaryEncoder gRotaryEncoder = AiEsp32RotaryEncoder(ROTARY_ENCODER_A_PIN, ROTARY_ENCODER_B_PIN, -1, -1);
 
 byte gCurScreenIndex = INDEX_NO_SCREEN;
 byte gPrevScreenIndex = INDEX_NO_SCREEN;
@@ -122,40 +124,17 @@ void customSetup() {
 
 	Serial.begin(115200);
 
+//	pinMode(ROTARY_ENCODER_A_PIN, INPUT_PULLUP);
+//	pinMode(ROTARY_ENCODER_B_PIN, INPUT_PULLUP);
+
 	//we must initialize rorary encoder 
 	gRotaryEncoder.begin();
 	gRotaryEncoder.setup([]{gRotaryEncoder.readEncoder_ISR();});
 	//optionally we can set boundaries and if values should cycle or not
 	gRotaryEncoder.setBoundaries(1, 20, false); //minValue, maxValue, cycle values (when max go to min and vice versa)
 	gRotaryEncoder.disable();
-}
 
-
-
-void rotary_loop() {
-
-	//lets see if anything changed
-	int16_t encoderDelta = gRotaryEncoder.encoderChanged();
-	
-	//optionally we can ignore whenever there is no change
-	if (encoderDelta == 0) return;
-	
-	//for some cases we only want to know if value is increased or decreased (typically for menu items)
-	if (encoderDelta>0) Serial.print("+");
-	if (encoderDelta<0) Serial.print("-");
-
-	//for other cases we want to know what is current value. Additionally often we only want if something changed
-	//example: when using rotary encoder to set termostat temperature, or sound volume etc
-	
-	//if value is changed compared to our last read
-	if (encoderDelta!=0) {
-		//now we need current value
-		int16_t encoderValue = gRotaryEncoder.readEncoder();
-		//process new value. Here is simple output.
-		Serial.print("Value: ");
-		Serial.println(encoderValue);
-	} 
-	
+	Keyboard.init();
 }
 
 char* createState(int index)
@@ -186,12 +165,14 @@ void processScreen()
 	{
 		if (gpCurScreen != NULL)
 		{
+			DBUGLN("Delete screen");
 			delete gpCurScreen;
 			gRotaryEncoder.disable();
 		}
 		gpCurScreen = (BaseScreen*)createState(gCurScreenIndex);
 		if (gpCurScreen != NULL)
 		{
+			DBUGLN("Create screen");
 			gpCurScreen->Init();
 			gRotaryEncoder.enable();
 		}
@@ -221,9 +202,6 @@ void customLoop()
 	}
 
 	readData();
-
-	//in loop call your custom function which will process rotary encoder values
-	rotary_loop();
 
 	processScreen();
 }

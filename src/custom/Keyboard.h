@@ -21,13 +21,14 @@ class KeyboardClass
 
 	int m_prevState = 1;
 	byte m_counter = 0;
+	bool m_waitForRelease = false;
 
 	bool isPressed();
  protected:
 
 
  public:
-	 uint8_t init();
+	 void init();
 
 	 uint8_t getKey();
 };

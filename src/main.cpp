@@ -91,6 +91,8 @@ void setup()
 
   rapiSender.setOnEvent(on_rapi_event);
   rapiSender.enableSequenceId(0);
+
+  customSetup();
 } // end setup
 
 // -------------------------------------------------------------------
