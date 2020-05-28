@@ -36,6 +36,11 @@ public:
 		ResetEnterTime();
 	}
 
+	virtual ~BaseScreen()
+	{
+
+	}
+
 	void ResetEnterTime()
 	{
 		m_timeToReturn = millis() + SCREEN_TIMEOUT;
