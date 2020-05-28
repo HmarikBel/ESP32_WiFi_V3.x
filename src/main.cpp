@@ -30,7 +30,7 @@
 #include <MongooseCore.h>
 
 #include "emonesp.h"
-#include "config.h"
+#include "app_config.h"
 #include "net_manager.h"
 #include "web_server.h"
 #include "ohm.h"
@@ -43,6 +43,8 @@
 #include "openevse.h"
 #include "root_ca.h"
 #include "hal.h"
+#include "time_man.h"
+#include "tesla_client.h"
 #include "custom\custommain.h"
 
 #include "RapiSender.h"
@@ -54,6 +56,9 @@ unsigned long Timer3; // Timer for events once every 2 seconds
 
 boolean rapi_read = 0; //flag to indicate first read of RAPI status
 
+static uint32_t start_mem = 0;
+static uint32_t last_mem = 0;
+
 // -------------------------------------------------------------------
 // SETUP
 // -------------------------------------------------------------------
@@ -62,10 +67,9 @@ void setup()
   HAL.begin();
 
   DEBUG.println();
-  DEBUG.print("OpenEVSE WiFI ");
-  DEBUG.println(HAL.getShortId());
-  DEBUG.println("Firmware: " + currentfirmware);
-
+  DEBUG.printf("OpenEVSE WiFI %s\n", HAL.getShortId().c_str());
+  DEBUG.printf("Firmware: %s\n", currentfirmware.c_str());
+  DEBUG.printf("IDF version: %s\n", ESP.getSdkVersion());
   DEBUG.printf("Free: %d\n", HAL.getFreeHeap());
 
   // Read saved settings from the config
@@ -89,8 +93,12 @@ void setup()
   DBUGF("After ota_setup: %d", HAL.getFreeHeap());
 #endif
 
-  rapiSender.setOnEvent(on_rapi_event);
-  rapiSender.enableSequenceId(0);
+  input_setup();
+
+  lcd_display(F("OpenEVSE WiFI"), 0, 0, 0, LCD_CLEAR_LINE);
+  lcd_display(currentfirmware, 0, 1, 5 * 1000, LCD_CLEAR_LINE);
+
+  start_mem = last_mem = HAL.getFreeHeap();
 
   customSetup();
 } // end setup
@@ -114,31 +122,36 @@ loop() {
 #endif
   rapiSender.loop();
   divert_current_loop();
+  time_loop();
 
   customLoop();
 
-  if(OPENEVSE_STATE_STARTING != state &&
-     OPENEVSE_STATE_INVALID != state)
+  if(OpenEVSE.isConnected())
   {
-    // Read initial state from OpenEVSE
-    if (rapi_read == 0)
+    if(OPENEVSE_STATE_STARTING != state &&
+       OPENEVSE_STATE_INVALID != state)
     {
-      lcd_display(F("OpenEVSE WiFI"), 0, 0, 0, LCD_CLEAR_LINE);
-      lcd_display(currentfirmware, 0, 1, 5 * 1000, LCD_CLEAR_LINE);
-      lcd_loop();
+      // Read initial state from OpenEVSE
+      if (rapi_read == 0)
+      {
+        DBUGLN("first read RAPI values");
+        handleRapiRead(); //Read all RAPI values
+        rapi_read=1;
+      }
 
-      DBUGLN("first read RAPI values");
-      handleRapiRead(); //Read all RAPI values
-      rapi_read=1;
-    }
-
-    // -------------------------------------------------------------------
-    // Do these things once every 2s
-    // -------------------------------------------------------------------
-    if ((millis() - Timer3) >= 2000) {
-      DEBUG.printf("Free: %d\n", HAL.getFreeHeap());
-      update_rapi_values();
-      Timer3 = millis();
+      // -------------------------------------------------------------------
+      // Do these things once every 2s
+      // -------------------------------------------------------------------
+      if ((millis() - Timer3) >= 2000) {
+        uint32_t current = HAL.getFreeHeap();
+        int32_t diff = (int32_t)(last_mem - current);
+        if(diff != 0) {
+          DEBUG.printf("%s: Free memory %u - diff %d %d\n", time_format_time(time(NULL)).c_str(), current, diff, start_mem - current);
+          last_mem = current;
+        }
+        update_rapi_values();
+        Timer3 = millis();
+      }
     }
   }
   else
@@ -147,16 +160,13 @@ loop() {
     if ((millis() - Timer3) >= 1000)
     {
       // Check state the OpenEVSE is in.
-      rapiSender.sendCmd("$GS", [](int ret) {
-        if (RAPI_RESPONSE_OK == ret)
+      OpenEVSE.begin(rapiSender, [](bool connected)
+      {
+        if(connected)
         {
-          if(rapiSender.getTokenCnt() >= 3)
-          {
-            const char *val = rapiSender.getToken(1);
-            DBUGVAR(val);
-            state = strtol(val, NULL, 10);
-            DBUGVAR(state);
-          }
+          OpenEVSE.getStatus([](int ret, uint8_t evse_state, uint32_t session_time, uint8_t pilot_state, uint32_t vflags) {
+            state = evse_state;
+          });
         } else {
           DBUGLN("OpenEVSE not responding or not connected");
         }
@@ -167,6 +177,10 @@ loop() {
 
   if(net_is_connected())
   {
+    if (config_tesla_enabled()) {
+      teslaClient.loop();
+    }
+
     if (config_mqtt_enabled()) {
       mqtt_loop();
     }
@@ -189,6 +203,14 @@ loop() {
         }
         if(config_ohm_enabled()) {
           ohm_loop();
+        }
+        
+        if (config_mqtt_enabled()) {
+          data = "";
+          teslaClient.getChargeInfoJson(data);
+          if (data.length() > 0) {
+            mqtt_publish(data);
+          }
         }
       }
 

@@ -53,7 +53,7 @@
 #endif
 
 #ifndef WIFI_BUTTON_AP_TIMEOUT
-#define WIFI_BUTTON_AP_TIMEOUT              (5 * 1000)
+#define WIFI_BUTTON_AP_TIMEOUT              (2 * 1000)
 #endif
 
 #ifndef WIFI_BUTTON_FACTORY_RESET_TIMEOUT
@@ -64,8 +64,14 @@
 #define WIFI_CLIENT_RETRY_TIMEOUT (5 * 60 * 1000)
 #endif
 
+// Used to change the ADC channel used for seeding the rndom number generator
+// Should be set to an unconnected pin
 #ifndef RANDOM_SEED_CHANNEL
+#if WIFI_BUTTON != 0 && (!defined(WIFI_LED) || WIFI_LED != 0)
 #define RANDOM_SEED_CHANNEL 0
+#else
+#define RANDOM_SEED_CHANNEL 1
+#endif
 #endif
 
 #ifdef ONBOARD_LEDS
@@ -80,6 +86,15 @@
 
 #ifndef HAL_SHORT_ID_LENGTH
 #define HAL_SHORT_ID_LENGTH 4
+#endif
+
+#ifndef SNTP_DEFAULT_HOST
+#define SNTP_DEFAULT_HOST "pool.ntp.org"
+#endif
+
+#ifndef DEFAULT_TIME_ZONE
+// Default time zone, Europe/London
+#define DEFAULT_TIME_ZONE "Europe/London|GMT0BST,M3.5.0/1,M10.5.0"
 #endif
 
 #endif // _EMONESP_H

@@ -1,10 +1,15 @@
+#if defined(ENABLE_DEBUG) && !defined(ENABLE_DEBUG_EMONCMS)
+#undef ENABLE_DEBUG
+#endif
+
 #include <Arduino.h>
+#include <ArduinoJson.h>
 #include <MongooseString.h>
 #include <MongooseHttpClient.h>
 
 #include "emonesp.h"
 #include "emoncms.h"
-#include "config.h"
+#include "app_config.h"
 #include "input.h"
 
 boolean emoncms_connected = false;
@@ -32,13 +37,23 @@ void emoncms_publish(String data)
     url += "&apikey=";
     url += emoncms_apikey;
 
-    DBUGLN(url);
+    DBUGVAR(url);
     packets_sent++;
 
     client.get(url, [](MongooseHttpClientResponse *response)
     {
       MongooseString result = response->body();
-      if (result == "ok") {
+      DBUGF("result = %.*s", result.length(), result.c_str());
+
+      StaticJsonDocument<32> doc;
+      if(DeserializationError::Code::Ok == deserializeJson(doc, result.c_str(), result.length()))
+      {
+        bool success = doc["success"]; // true
+        if(success) {
+          packets_success++;
+          emoncms_connected = true;
+        }
+      } else if (result == "ok") {
         packets_success++;
         emoncms_connected = true;
       } else {

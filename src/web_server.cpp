@@ -7,15 +7,15 @@
 #include "custom\WiFiLogic.h"
 #include "custom\Data.h"
 
+typedef const __FlashStringHelper *fstr_t;
+
 #ifdef ESP32
 
 #include <WiFi.h>
-typedef const char *fstr_t;
 
 #elif defined(ESP8266)
 
 #include <ESP8266WiFi.h>
-typedef const __FlashStringHelper *fstr_t;
 
 #else
 #error Platform not supported
@@ -26,7 +26,7 @@ typedef const __FlashStringHelper *fstr_t;
 #include "emonesp.h"
 #include "web_server.h"
 #include "web_server_static.h"
-#include "config.h"
+#include "app_config.h"
 #include "net_manager.h"
 #include "mqtt.h"
 #include "input.h"
@@ -34,17 +34,16 @@ typedef const __FlashStringHelper *fstr_t;
 #include "divert.h"
 #include "lcd.h"
 #include "hal.h"
+#include "time_man.h"
+#include "tesla_client.h"
 
 MongooseHttpServer server;          // Create class for Web server
-//AsyncWebSocket ws("/ws");
-//StaticFileWebHandler staticFile;
 
 bool enableCors = true;
 
 // Event timeouts
 unsigned long wifiRestartTime = 0;
 unsigned long mqttRestartTime = 0;
-unsigned long systemRestartTime = 0;
 unsigned long systemRebootTime = 0;
 unsigned long apOffTime = 0;
 
@@ -56,6 +55,7 @@ const char _CONTENT_TYPE_JSON[] PROGMEM = "application/json";
 const char _CONTENT_TYPE_JS[] PROGMEM = "application/javascript";
 const char _CONTENT_TYPE_JPEG[] PROGMEM = "image/jpeg";
 const char _CONTENT_TYPE_PNG[] PROGMEM = "image/png";
+const char _CONTENT_TYPE_SVG[] PROGMEM = "image/svg+xml";
 
 static const char _DUMMY_PASSWORD[] PROGMEM = "_DUMMY_PASSWORD";
 #define DUMMY_PASSWORD FPSTR(_DUMMY_PASSWORD)
@@ -67,6 +67,7 @@ String currentfirmware = ESCAPEQUOTE(BUILD_TAG);
 
 void dumpRequest(MongooseHttpServerRequest *request)
 {
+#ifdef ENABLE_DEBUG_WEB_REQUEST
   DBUGF("host.length = %d", request->host().length());
   DBUGF("host.c_str = %p", request->host().c_str());
   DBUGF("uri.length = %d", request->uri().length());
@@ -119,6 +120,7 @@ void dumpRequest(MongooseHttpServerRequest *request)
     }
   }
   */
+#endif
 }
 
 // -------------------------------------------------------------------
@@ -151,6 +153,12 @@ bool requestPreProcess(MongooseHttpServerRequest *request, MongooseHttpServerRes
 // -------------------------------------------------------------------
 bool isPositive(const String &str) {
   return str == "1" || str == "true";
+}
+
+bool isPositive(MongooseHttpServerRequest *request, const char *param) {
+  char paramValue[8];
+  int paramFound = request->getParam(param, paramValue, sizeof(paramValue));
+  return paramFound >= 0 && (0 == paramFound || isPositive(String(paramValue)));
 }
 
 // -------------------------------------------------------------------
@@ -328,13 +336,33 @@ handleSaveMqtt(MongooseHttpServerRequest *request) {
     pass = mqtt_pass;
   }
 
+  int protocol = MQTT_PROTOCOL_MQTT;
+  char proto[6];
+  if(request->getParam("protocol", proto, sizeof(proto)) > 0) {
+    // Cheap and chearful check, obviously not checking for invalid input
+    protocol = 's' == proto[4] ? MQTT_PROTOCOL_MQTT_SSL : MQTT_PROTOCOL_MQTT;
+  }
+
+  int port = 1883;
+  char portStr[8];
+  if(request->getParam("port", portStr, sizeof(portStr)) > 0) {
+    port = atoi(portStr);
+  }
+
+  char unauthString[8];
+  int unauthFound = request->getParam("reject_unauthorized", unauthString, sizeof(unauthString));
+  bool reject_unauthorized = unauthFound < 0 || 0 == unauthFound || isPositive(String(unauthString));
+
   config_save_mqtt(isPositive(request->getParam("enable")),
+                   protocol,
                    request->getParam("server"),
+                   port,
                    request->getParam("topic"),
                    request->getParam("user"),
                    pass,
                    request->getParam("solar"),
-                   request->getParam("grid_ie"));
+                   request->getParam("grid_ie"),
+                   reject_unauthorized);
 
   char tmpStr[200];
   snprintf(tmpStr, sizeof(tmpStr), "Saved: %s %s %s %s %s %s", mqtt_server.c_str(),
@@ -395,6 +423,61 @@ handleSaveAdmin(MongooseHttpServerRequest *request) {
 }
 
 // -------------------------------------------------------------------
+// Manually set the time
+// url: /settime
+// -------------------------------------------------------------------
+void
+handleSetTime(MongooseHttpServerRequest *request) {
+  MongooseHttpServerResponseStream *response;
+  if(false == requestPreProcess(request, response, CONTENT_TYPE_TEXT)) {
+    return;
+  }
+
+  bool qsntp_enable = isPositive(request, "ntp");
+  String qtz = request->getParam("tz");
+
+  config_save_sntp(qsntp_enable, qtz);
+  if(config_sntp_enabled()) {
+    time_check_now();
+  }
+
+  if(false == qsntp_enable)
+  {
+    String time = request->getParam("time");
+
+    struct tm tm;
+
+    int yr, mnth, d, h, m, s;
+    if(6 == sscanf( time.c_str(), "%4d-%2d-%2dT%2d:%2d:%2dZ", &yr, &mnth, &d, &h, &m, &s))
+    {
+      tm.tm_year = yr - 1900;
+      tm.tm_mon = mnth - 1;
+      tm.tm_mday = d;
+      tm.tm_hour = h;
+      tm.tm_min = m;
+      tm.tm_sec = s;
+
+      struct timeval set_time = {0,0};
+      set_time.tv_sec = mktime(&tm);
+
+      time_set_time(set_time, "manual");
+
+    }
+    else
+    {
+      response->setCode(400);
+      response->print("could not parse time");
+      request->send(response);
+      return;
+    }
+  }
+
+  response->setCode(200);
+  response->print("set");
+  request->send(response);
+}
+
+// -------------------------------------------------------------------
 // Save advanced settings
 // url: /saveadvanced
 // -------------------------------------------------------------------
@@ -406,14 +489,103 @@ handleSaveAdvanced(MongooseHttpServerRequest *request) {
   }
 
   String qhostname = request->getParam("hostname");
+  String qsntp_host = request->getParam("sntp_host");
 
-  config_save_advanced(qhostname);
+  config_save_advanced(qhostname, qsntp_host);
 
   response->setCode(200);
   response->print("saved");
   request->send(response);
 }
 
+// -------------------------------------------------------------------
+// Save Tesla
+// url: /savetesla
+// -------------------------------------------------------------------
+void
+handleSaveTesla(MongooseHttpServerRequest *request) {
+  MongooseHttpServerResponseStream *response;
+  if(false == requestPreProcess(request, response, CONTENT_TYPE_TEXT)) {
+    return;
+  }
+
+  String user = request->getParam("user");
+  String pass = request->getParam("pass");
+  bool enable = isPositive(request->getParam("enable"));
+  config_save_tesla(enable, user, pass);
+
+  teslaClient.setUser(user.c_str());
+  teslaClient.setPass(pass.c_str());
+
+  if (enable) {
+    teslaClient.requestAccessToken();
+  }
+
+  char tmpStr[200];
+  snprintf(tmpStr, sizeof(tmpStr), "Saved: %s %s",
+           teslaClient.getUser(),
+           teslaClient.getPass());
+  DBUGLN(tmpStr);
+
+  response->setCode(200);
+  response->print(tmpStr);
+  request->send(response);
+}
+
+// -------------------------------------------------------------------
+// Save Tesla Vehicle Idx
+// url: /saveteslavi
+// -------------------------------------------------------------------
+void
+handleSaveTeslaVI(MongooseHttpServerRequest *request) {
+  MongooseHttpServerResponseStream *response;
+  if(false == requestPreProcess(request, response, CONTENT_TYPE_TEXT)) {
+    return;
+  }
+
+  String svi = request->getParam("vi");
+  int vehidx = atoi(svi.c_str());
+  teslaClient.setVehicleIdx(vehidx);
+  config_save_tesla_vehidx(vehidx);
+
+  char tmpStr[200];
+  snprintf(tmpStr, sizeof(tmpStr), "Saved: %s",svi.c_str());
+  DBUGLN(tmpStr);
+
+  response->setCode(200);
+  response->print(tmpStr);
+  request->send(response);
+}
+
+// -------------------------------------------------------------------
+// Get Tesla Vehicle Info
+// url: /teslaveh
+// -------------------------------------------------------------------
+void
+handleTeslaVeh(MongooseHttpServerRequest *request) {
+  MongooseHttpServerResponseStream *response;
+  if(false == requestPreProcess(request, response)) {
+    return;
+  }
+
+  String s = "{";
+  int vc = teslaClient.getVehicleCnt();
+  s += "\"count:\"" + String(vc);
+  if (vc) {
+    s += ",[";
+    for (int i=0;i < vc;i++) {
+      s += "{\"id\":\"" + teslaClient.getVehicleId(i) + "\",";
+      s += "\"name\":\"" + teslaClient.getVehicleDisplayName(i) + "\"}";
+      if (i < vc-1) s += ",";
+    }
+    s += "]";
+  }
+  s += "}";
+
+  response->setCode(200);
+  response->print(s);
+  request->send(response);
+}
 // -------------------------------------------------------------------
 // Save the Ohm keyto EEPROM
 // url: /handleSaveOhmkey
@@ -445,6 +617,17 @@ handleStatus(MongooseHttpServerRequest *request) {
   if(false == requestPreProcess(request, response)) {
     return;
   }
+
+  // Get the current time
+  struct timeval local_time;
+  gettimeofday(&local_time, NULL);
+
+  struct tm * timeinfo = gmtime(&local_time.tv_sec);
+
+  char time[64];
+  char offset[8];
+  strftime(time, sizeof(time), "%FT%TZ", timeinfo);
+  strftime(offset, sizeof(offset), "%z", timeinfo);
 
   String s = "{";
   if (net_eth_connected()) {
@@ -497,7 +680,22 @@ handleStatus(MongooseHttpServerRequest *request) {
   s += "\"charge_rate\":" + String(charge_rate) + ",";
   s += "\"divert_update\":" + String((millis() - lastUpdate) / 1000) + ",";
 
-  s += "\"ota_update\":" + String(Update.isRunning());
+  s += "\"ota_update\":" + String(Update.isRunning()) + ",";
+  s += "\"time\":\"" + String(time) + "\",";
+  s += "\"offset\":\"" + String(offset) + "\"";
+  {
+    const TESLA_CHARGE_INFO *tci = teslaClient.getChargeInfo();
+    if (tci->isValid) {
+      s += ",";
+      s += "\"batteryRange\":" + String(tci->batteryRange) + ",";
+      s += "\"chargeEnergyAdded\":" + String(tci->chargeEnergyAdded) + ",";
+      s += "\"chargeMilesAddedRated\":" + String(tci->chargeMilesAddedRated) + ",";
+      s += "\"batteryLevel\":" + String(tci->batteryLevel) + ",";
+      s += "\"chargeLimitSOC\":" + String(tci->chargeLimitSOC) + ",";
+      s += "\"timeToFullCharge\":" + String(tci->timeToFullCharge) + ",";
+      s += "\"chargerVoltage\":" + String(tci->chargerVoltage);
+    }
+  }
 
 #ifdef ENABLE_LEGACY_API
   s += ",\"networks\":[" + st + "]";
@@ -578,7 +776,10 @@ handleConfig(MongooseHttpServerRequest *request) {
   s += "\",";
   s += "\"emoncms_fingerprint\":\"" + emoncms_fingerprint + "\",";
   s += "\"mqtt_enabled\":" + String(config_mqtt_enabled() ? "true" : "false") + ",";
+  s += "\"mqtt_protocol\":\"" + String(0 == config_mqtt_protocol() ? "mqtt" : "mqtts") + "\",";
   s += "\"mqtt_server\":\"" + mqtt_server + "\",";
+  s += "\"mqtt_port\":" + String(mqtt_port) + ",";
+  s += "\"mqtt_reject_unauthorized\":" + String(config_mqtt_reject_unauthorized() ? "true" : "false") + ",";
   s += "\"mqtt_topic\":\"" + mqtt_topic + "\",";
   s += "\"mqtt_user\":\"" + mqtt_user + "\",";
   s += "\"mqtt_pass\":\"";
@@ -588,6 +789,8 @@ handleConfig(MongooseHttpServerRequest *request) {
   s += "\",";
   s += "\"mqtt_solar\":\""+mqtt_solar+"\",";
   s += "\"mqtt_grid_ie\":\""+mqtt_grid_ie+"\",";
+  s += "\"mqtt_supported_protocols\":[\"mqtt\",\"mqtts\"],";
+  s += "\"http_supported_protocols\":[\"http\",\"https\"],";
   s += "\"www_username\":\"" + www_username + "\",";
   s += "\"www_password\":\"";
   if(www_password != 0) {
@@ -595,6 +798,11 @@ handleConfig(MongooseHttpServerRequest *request) {
   }
   s += "\",";
   s += "\"hostname\":\"" + esp_hostname + "\",";
+  s += "\"time_zone\":\"" + time_zone + "\",";
+  s += "\"sntp_enabled\":" + String(config_sntp_enabled() ? "true" : "false") + ",";
+  s += "\"sntp_host\":\"" + sntp_hostname + "\",";
+  s += "\"tesla_user\":\"" + String(teslaClient.getUser()) + "\",";
+  s += "\"tesla_vehidx\":" + String(teslaClient.getCurVehicleIdx()) + ",";
   s += "\"ohm_enabled\":" + String(config_ohm_enabled() ? "true" : "false");
   s += "}";
 
@@ -678,7 +886,7 @@ handleRestart(MongooseHttpServerRequest *request) {
   response->print("1");
   request->send(response);
 
-  systemRestartTime = millis() + 1000;
+  systemRebootTime = millis() + 1000;
 }
 
 
@@ -790,6 +998,7 @@ handleUpdateUpload(MongooseHttpServerRequest *request, int ev, MongooseString fi
 
   if(MG_EV_HTTP_PART_END == ev)
   {
+    DBUGLN("Upload finished");
     if(Update.end(true)) {
       DBUGF("Update Success: %lluB", index+len);
       lcd_display(F("Complete"), 0, 1, 10 * 1000, LCD_CLEAR_LINE | LCD_DISPLAY_NOW);
@@ -798,6 +1007,7 @@ handleUpdateUpload(MongooseHttpServerRequest *request, int ev, MongooseString fi
       request->send(upgradeResponse);
       upgradeResponse = NULL;
     } else {
+      DBUGF("Update failed: %d", Update.getError());
       lcd_display(F("Error"), 0, 1, 10 * 1000, LCD_CLEAR_LINE | LCD_DISPLAY_NOW);
       handleUpdateError(request);
     }
@@ -808,6 +1018,8 @@ handleUpdateUpload(MongooseHttpServerRequest *request, int ev, MongooseString fi
 
 static void handleUpdateClose(MongooseHttpServerRequest *request)
 {
+  DBUGLN("Update close");
+
   if(upgradeResponse) {
     delete upgradeResponse;
     upgradeResponse = NULL;
@@ -822,7 +1034,8 @@ String delayTimer = "0 0 0 0";
 
 void
 handleRapi(MongooseHttpServerRequest *request) {
-  bool json = request->hasParam("json");
+  bool json = isPositive(request, "json");
+
   int code = 200;
 
   MongooseHttpServerResponseStream *response;
@@ -848,7 +1061,9 @@ handleRapi(MongooseHttpServerRequest *request) {
 
     // BUG: Really we should do this in the main loop not here...
     RAPI_PORT.flush();
+    DBUGVAR(rapi);
     int ret = rapiSender.sendCmdSync(rapi);
+    DBUGVAR(ret);
 
     if(RAPI_RESPONSE_OK == ret ||
        RAPI_RESPONSE_NK == ret)
@@ -1047,48 +1262,17 @@ void handleLog(MongooseHttpServerRequest *request) {
   request->send(response);
 }
 
-/*
-void onWsEvent(AsyncWebSocket * server, AsyncWebSocketClient *client, AwsEventType type, void *arg, uint8_t *data, size_t len) {
-  if(type == WS_EVT_CONNECT) {
-    DBUGF("ws[%s][%u] connect", server->url(), client->id());
-    client->ping();
-  } else if(type == WS_EVT_DISCONNECT) {
-    DBUGF("ws[%s][%u] disconnect: %u", server->url(), client->id());
-  } else if(type == WS_EVT_ERROR) {
-    DBUGF("ws[%s][%u] error(%u): %s", server->url(), client->id(), *((uint16_t*)arg), (char*)data);
-  } else if(type == WS_EVT_PONG) {
-    DBUGF("ws[%s][%u] pong[%u]: %s", server->url(), client->id(), len, (len)?(char*)data:"");
-  } else if(type == WS_EVT_DATA) {
-    AwsFrameInfo * info = (AwsFrameInfo*)arg;
-    String msg = "";
-    if(info->final && info->index == 0 && info->len == len)
-    {
-      //the whole message is in a single frame and we got all of it's data
-      DBUGF("ws[%s][%u] %s-message[%u]: ", server->url(), client->id(), (info->opcode == WS_TEXT)?"text":"binary", len);
-    } else {
-      // TODO: handle messages that are comprised of multiple frames or the frame is split into multiple packets
-    }
-  }
+
+void onWsFrame(MongooseHttpWebSocketConnection *connection, int flags, uint8_t *data, size_t len)
+{
+  DBUGF("Got message %.*s", len, (const char *)data);
 }
-*/
 
 void
 web_server_setup() {
 //  SPIFFS.begin(); // mount the fs
 
   server.begin(80);
-
-  // Setup the static files
-//  server.serveStatic("/", SPIFFS, "/")
-//    .setDefaultFile("index.html");
-
-  // Add the Web Socket server
-//  ws.onEvent(onWsEvent);
-//  server.addHandler(&ws);
-//  server.addHandler(&staticFile);
-
-  // Start server & server root html /
-  //server.on("/", handleHome);
 
   // Handle status updates
   server.on("/status$", handleStatus);
@@ -1099,8 +1283,12 @@ web_server_setup() {
   server.on("/saveemoncms$", handleSaveEmoncms);
   server.on("/savemqtt$", handleSaveMqtt);
   server.on("/saveadmin$", handleSaveAdmin);
+  server.on("/savetesla$", handleSaveTesla);
+  server.on("/saveteslavi$", handleSaveTeslaVI);
+  server.on("/teslaveh$", handleTeslaVeh);
   server.on("/saveadvanced$", handleSaveAdvanced);
   server.on("/saveohmkey$", handleSaveOhmkey);
+  server.on("/settime$", handleSetTime);
   server.on("/reset$", handleRst);
   server.on("/restart$", handleRestart);
   server.on("/rapi$", handleRapi);
@@ -1124,6 +1312,8 @@ web_server_setup() {
     })->
     onUpload(handleUpdateUpload)->
     onClose(handleUpdateClose);
+
+  server.on("/ws$")->onFrame(onWsFrame);
 
   server.onNotFound(handleNotFound);
 
@@ -1152,13 +1342,6 @@ web_server_loop() {
     net_wifi_turn_off_ap();
   }
 
-  // Do we need to restart the system?
-  if(systemRestartTime > 0 && millis() > systemRestartTime) {
-    systemRestartTime = 0;
-    net_wifi_disconnect();
-    HAL.reset();
-  }
-
   // Do we need to reboot the system?
   if(systemRebootTime > 0 && millis() > systemRebootTime) {
     systemRebootTime = 0;
@@ -1171,5 +1354,5 @@ web_server_loop() {
 
 void web_server_event(String &event)
 {
-  //ws.textAll(event);
+  server.sendAll(event);
 }

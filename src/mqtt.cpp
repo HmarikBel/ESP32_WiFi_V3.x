@@ -1,6 +1,10 @@
+#if defined(ENABLE_DEBUG) && !defined(ENABLE_DEBUG_MQTT)
+#undef ENABLE_DEBUG
+#endif
+
 #include "emonesp.h"
 #include "mqtt.h"
-#include "config.h"
+#include "app_config.h"
 #include "divert.h"
 #include "input.h"
 #include "hal.h"
@@ -12,13 +16,16 @@
 
 MongooseMqttClient mqttclient;
 
-long lastMqttReconnectAttempt = 0;
+long nextMqttReconnectAttempt = 0;
 int clientTimeout = 0;
 int i = 0;
-String payload_str = "";
 bool connecting = false;
 
 String lastWill = "";
+
+#ifndef MQTT_CONNECT_TIMEOUT
+#define MQTT_CONNECT_TIMEOUT (5 * 1000)
+#endif // !MQTT_CONNECT_TIMEOUT
 
 // -------------------------------------------------------------------
 // MQTT msg Received callback function:
@@ -34,7 +41,7 @@ void mqttmsg_callback(MongooseString topic, MongooseString payload) {
   DBUGLN("MQTT received:");
   DBUGLN("Topic: " + topic_string);
 
-  payload_str = payload.toString();
+  String payload_str = payload.toString();
   DBUGLN("Payload: " + payload_str);
 
   // If MQTT message is solar PV
@@ -61,6 +68,7 @@ void mqttmsg_callback(MongooseString topic, MongooseString payload) {
     // Detect if MQTT message is a RAPI command e.g to set 13A <base-topic>/rapi/$SC 13
     // Locate '$' character in the MQTT message to identify RAPI command
     int rapi_character_index = topic_string.indexOf('$');
+    DBUGVAR(rapi_character_index);
     if (rapi_character_index > 1) {
       DBUGF("Processing as RAPI");
       // Print RAPI command from mqtt-sub topic e.g $SC
@@ -98,13 +106,14 @@ mqtt_connect()
   connecting = true;
 
   mqttclient.onMessage(mqttmsg_callback); //function to be called when mqtt msg is received on subscribed topic
-  mqttclient.onError([](uint8_t err) {
-    DBUGF("MQTT error %u", err);
+  mqttclient.onError([](int err) {
+    DBUGF("MQTT error %d", err);
     connecting = false;
   });
 
-  DBUG("MQTT Connecting to...");
-  DBUGLN(mqtt_server);
+  String mqtt_host = mqtt_server + ":" + String(mqtt_port);
+
+  DBUGF("MQTT Connecting to... %s://%s", MQTT_MQTT == config_mqtt_protocol() ? "mqtt" : "mqtts", mqtt_host.c_str());
 
   // Build the last will message
   DynamicJsonDocument willDoc(JSON_OBJECT_SIZE(3) + 60);
@@ -117,9 +126,14 @@ mqtt_connect()
   serializeJson(willDoc, lastWill);
   DBUGVAR(lastWill);
 
+  if(!config_mqtt_reject_unauthorized()) {
+    DEBUG.println("WARNING: Certificate verification disabled");
+  }
+
   mqttclient.setCredentials(mqtt_user, mqtt_pass);
   mqttclient.setLastWillAndTestimment(mqtt_announce_topic, lastWill, true);
-  mqttclient.connect(mqtt_server + ":1883", esp_hostname, []()
+  mqttclient.setRejectUnauthorized(config_mqtt_reject_unauthorized());
+  connecting = mqttclient.connect((MongooseMqttProtocol)config_mqtt_protocol(), mqtt_host, esp_hostname, []()
   {
     DBUGLN("MQTT connected");
 
@@ -226,9 +240,9 @@ mqtt_loop() {
 
   if (!mqttclient.connected()) {
     long now = millis();
-    // try and reconnect continuously for first 5s then try again once every 10s
-    if ((now < 50000) || ((now - lastMqttReconnectAttempt) > 100000)) {
-      lastMqttReconnectAttempt = now;
+    // try and reconnect every x seconds
+    if (now > nextMqttReconnectAttempt) {
+      nextMqttReconnectAttempt = now + MQTT_CONNECT_TIMEOUT;
       mqtt_connect(); // Attempt to reconnect
     }
   }
@@ -238,11 +252,10 @@ mqtt_loop() {
 
 void
 mqtt_restart() {
-// TODO
-//  if (mqttclient.connected()) {
-//    mqttclient.disconnect();
-//  }
-//  lastMqttReconnectAttempt = 0;
+  if (mqttclient.connected()) {
+    mqttclient.disconnect();
+  }
+  nextMqttReconnectAttempt = 0;
 }
 
 boolean

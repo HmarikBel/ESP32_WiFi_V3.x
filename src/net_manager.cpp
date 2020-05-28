@@ -1,8 +1,9 @@
 #include "emonesp.h"
 #include "net_manager.h"
-#include "config.h"
+#include "app_config.h"
 #include "lcd.h"
 #include "hal.h"
+#include "time_man.h"
 
 #ifdef ESP32
 #include <WiFi.h>
@@ -13,6 +14,8 @@
 #else
 #error Platform not supported
 #endif
+
+#include <MongooseCore.h>
 
 #include <DNSServer.h>                // Required for captive portal
 
@@ -44,7 +47,7 @@ int wifiLedState = !WIFI_LED_ON_STATE;
 unsigned long wifiLedTimeOut = millis();
 #endif
 
-int wifiButtonState = HIGH;
+int wifiButtonState = !WIFI_BUTTON_PRESSED_STATE;
 unsigned long wifiButtonTimeOut = millis();
 bool apMessage = false;
 
@@ -63,6 +66,9 @@ static bool eth_connected = false;
 void
 startAP() {
   DBUGLN("Starting AP");
+
+  DBUGVAR(net_wifi_mode_is_ap());
+  DBUGVAR(net_wifi_mode_is_sta());
 
   if (net_wifi_mode_is_sta()) {
     WiFi.disconnect(true);
@@ -107,19 +113,16 @@ startClient()
   // DEBUG.print(" epass:");
   // DEBUG.println(epass.c_str());
 
-  client_disconnects = 0;
-
-  WiFi.begin(esid.c_str(), epass.c_str());
-#ifdef ESP32
-  WiFi.setHostname(esp_hostname.c_str());
-#else
+#ifndef ESP32
   WiFi.hostname(esp_hostname.c_str());
 #endif // !ESP32
-  WiFi.enableSTA(true);
+
+  WiFi.begin(esid.c_str(), epass.c_str());
 }
 
 static void net_wifi_start()
 {
+  client_disconnects = 0;
   // 1) If no network configured start up access point
   if (esid == 0 || esid == "")
   {
@@ -130,6 +133,15 @@ static void net_wifi_start()
   {
     startClient();
   }
+}
+
+static void display_state()
+{
+  lcd_display(F("Hostname:"), 0, 0, 0, LCD_CLEAR_LINE);
+  lcd_display(esp_hostname.c_str(), 0, 1, 5000, LCD_CLEAR_LINE);
+
+  lcd_display(F("IP Address:"), 0, 0, 0, LCD_CLEAR_LINE);
+  lcd_display(ipaddress.c_str(), 0, 1, 5000, LCD_CLEAR_LINE);
 }
 
 static void net_connected(IPAddress myAddress)
@@ -144,8 +156,12 @@ static void net_connected(IPAddress myAddress)
   ipaddress = tmpStr;
   DEBUG.print("Connected, IP: ");
   DEBUG.println(tmpStr);
-  lcd_display(F("IP Address"), 0, 0, 0, LCD_CLEAR_LINE);
-  lcd_display(tmpStr, 0, 1, 5000, LCD_CLEAR_LINE);
+
+  display_state();
+
+  Mongoose.ipConfigChanged();
+
+  time_begin(sntp_hostname.c_str());
 }
 
 static void net_wifi_onStationModeConnected(const WiFiEventStationModeConnected &event) {
@@ -198,6 +214,10 @@ static void net_wifi_onStationModeDisconnected(const WiFiEventStationModeDisconn
   "UNKNOWN");
 
   client_disconnects++;
+
+  if(net_wifi_mode_is_sta()) {
+    startClient();
+  }
 }
 
 static void net_wifi_onAPModeStationConnected(const WiFiEventSoftAPModeStationConnected &event) {
@@ -244,6 +264,22 @@ void net_event(WiFiEvent_t event, system_event_info_t info)
 
   switch (event)
   {
+    case SYSTEM_EVENT_AP_START:
+    {
+      if(WiFi.softAPsetHostname(esp_hostname.c_str())) {
+        DBUGF("Set host name to %s", WiFi.softAPgetHostname());
+      } else {
+        DBUGF("Setting host name failed: %s", esp_hostname.c_str());
+      }
+    } break;
+    case SYSTEM_EVENT_STA_START:
+    {
+      if(WiFi.setHostname(esp_hostname.c_str())) {
+        DBUGF("Set host name to %s", WiFi.getHostname());
+      } else {
+        DBUGF("Setting host name failed: %s", esp_hostname.c_str());
+      }
+    } break;
     case SYSTEM_EVENT_STA_CONNECTED:
     {
       auto& src = info.connected;
@@ -291,7 +327,11 @@ void net_event(WiFiEvent_t event, system_event_info_t info)
     case SYSTEM_EVENT_ETH_START:
       DBUGLN("ETH Started");
       //set eth hostname here
-      ETH.setHostname("esp32-ethernet");
+      if(ETH.setHostname(esp_hostname.c_str())) {
+        DBUGF("Set host name to %s", ETH.getHostname());
+      } else {
+        DBUGF("Setting host name failed: %s", esp_hostname.c_str());
+      }
       break;
     case SYSTEM_EVENT_ETH_CONNECTED:
       DBUGLN("ETH Connected");
@@ -422,6 +462,8 @@ net_loop()
       DBUGF("Button released");
       if(millis() > wifiButtonTimeOut + WIFI_BUTTON_AP_TIMEOUT) {
         startAP();
+      } else {
+        display_state();
       }
     }
   }
@@ -430,9 +472,8 @@ net_loop()
   {
     DBUGLN("*** Factory Reset ***");
 
-    lcd_display(F("Factory Reset"), 0, 0, 0, LCD_CLEAR_LINE);
-    lcd_display(F(""), 0, 1, 10 * 1000, LCD_CLEAR_LINE);
-    lcd_loop();
+    lcd_display(F("Factory Reset"), 0, 0, 0, LCD_CLEAR_LINE | LCD_DISPLAY_NOW);
+    lcd_display(F(""), 0, 1, 10 * 1000, LCD_CLEAR_LINE | LCD_DISPLAY_NOW);
 
     delay(1000);
 
@@ -444,9 +485,8 @@ net_loop()
   }
   else if(false == apMessage && LOW == wifiButtonState && millis() > wifiButtonTimeOut + WIFI_BUTTON_AP_TIMEOUT)
   {
-    lcd_display(F("Access Point"), 0, 0, 0, LCD_CLEAR_LINE);
-    lcd_display(F(""), 0, 1, 10 * 1000, LCD_CLEAR_LINE);
-    lcd_loop();
+    lcd_display(F("Access Point"), 0, 0, 0, LCD_CLEAR_LINE | LCD_DISPLAY_NOW);
+    lcd_display(F(""), 0, 1, 10 * 1000, LCD_CLEAR_LINE | LCD_DISPLAY_NOW);
     apMessage = true;
   }
 
@@ -465,11 +505,7 @@ net_loop()
   if(isApOnly && 0 == apClients && client_retry && millis() > client_retry_time) {
     DEBUG.println("client re-try, resetting");
     delay(50);
-    #ifdef ESP32
-    esp_restart();
-    #else
     HAL.reset();
-    #endif
   }
 
   if(dnsServerStarted) {
@@ -481,12 +517,14 @@ net_loop()
 
 void
 net_wifi_restart() {
+  DBUGF("net_wifi_restart %d", WiFi.getMode());
   net_wifi_disconnect();
   net_wifi_start();
 }
 
 void
 net_wifi_disconnect() {
+  DBUGF("net_wifi_disconnect %d", WiFi.getMode());
   net_wifi_turn_off_ap();
   if (net_wifi_mode_is_sta()) {
     WiFi.disconnect(true);
@@ -495,6 +533,7 @@ net_wifi_disconnect() {
 
 void net_wifi_turn_off_ap()
 {
+  DBUGF("net_wifi_turn_off_ap %d", WiFi.getMode());
   if(net_wifi_mode_is_ap())
   {
     WiFi.softAPdisconnect(true);

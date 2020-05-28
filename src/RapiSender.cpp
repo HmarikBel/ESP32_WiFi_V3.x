@@ -194,7 +194,7 @@ RapiSender::sendCmd(String &cmdstr, RapiCommandCompleteHandler callback, unsigne
     if(!_waitingForReply) {
       _sendNextCmd();
     }
-  } else {
+  } else if(nullptr != callback) {
     callback(RAPI_RESPONSE_QUEUE_FULL);
   }
 }
@@ -218,7 +218,7 @@ RapiSender::sendCmdSync(String &cmdstr, unsigned long timeout)
   {
     int ret;
     bool finished;
-  } resultData;
+  } resultData = {0, false};
   SendCmdSyncData *result = &resultData;
 
   sendCmd(cmdstr, [result](int ret) {
@@ -299,7 +299,8 @@ RapiSender::_waitForResult(unsigned long timeout) {
     } else if (!strcmp(_tokens[0], "$NK")) {
       return RAPI_RESPONSE_NK;
     } else if (!strcmp(_tokens[0],"$WF") ||
-               !strcmp(_tokens[0],"$ST"))
+               !strcmp(_tokens[0],"$ST") ||
+               !strncmp(_tokens[0],"$A",2))
     {
       return RAPI_RESPONSE_ASYNC_EVENT;
     } else { // not OK or NK

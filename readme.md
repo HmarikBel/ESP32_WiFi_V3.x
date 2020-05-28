@@ -1,12 +1,12 @@
 # OpenEVSE WiFi Gateway
 
-[![Build Status](https://travis-ci.org/OpenEVSE/ESP32_WiFi_V3.svg?branch=master)](https://travis-ci.org/OpenEVSE/ESP32_WiFi_V3.x)
-
-[![Codacy Badge](https://api.codacy.com/project/badge/Grade/640ec33a27b24f6fb4fb1d7e74c7334c)](https://www.codacy.com/app/jeremy_poulter/ESP8266_WiFi_v2.x?utm_source=github.com&amp;utm_medium=referral&amp;utm_content=jeremypoulter/ESP8266_WiFi_v2.x&amp;utm_campaign=Badge_Grade)
+[![Build Status](https://travis-ci.org/OpenEVSE/ESP32_WiFi_V3.x.svg?branch=master)](https://travis-ci.org/OpenEVSE/ESP32_WiFi_V3.x)
 
 ![main](docs/main2.png)
 
-The WiFi gateway uses an **ESP32** which communicates with the OpenEVSE controller via serial utilizing the existing RAPI API serial interface. The web interface UI is served directly from the ESP8266 web server and can be controlled via a connected device over the network.
+The WiFi gateway uses an **ESP32** which communicates with the OpenEVSE controller via serial utilizing the existing RAPI API serial interface. The web interface UI is served directly from the ESP32 web server and can be controlled via a connected device over the network.
+
+Wired Ethernet connection is possible using [ESP32 Gateway](docs/wired-ethernet.md)
 
 [**See this repo for the older V2.x ESP8266 version**](https://github.com/openevse/ESP8266_WiFi_v2.x/)
 
@@ -35,10 +35,9 @@ Live demo: https://openevse.openenergymonitor.org
 
 ### WiFi Module
 
-- ESP32 
-Comming soon....
-- Purchase via: [OpenEVSE Store (USA/Canda)](https://store.openevse.com/collections/frontpage/products/openevse-wifi-kit) | [OpenEnergyMonitor (UK / EU)](http://shop.openenergymonitor.com/openevse-wifi-kit/)
-- See [OpenEVSE WiFi setup guide](https://openevse.dozuki.com/Guide/OpenEVSE+WiFi+%28Beta%29/14) for WiFi module connection instructions
+- ESP32
+- Purchase via: [OpenEVSE Store (USA/Canda)](https://store.openevse.com/collections/frontpage/products/openevse-wifi-kit) | [OpenEnergyMonitor (UK / EU)](https://shop.openenergymonitor.com/evse/)
+- See [OpenEVSE WiFi setup guide](https://openevse.dozuki.com/Guide/OpenEVSE+WiFi+%28Beta%29/14) for WiFi module hardware connection instructions
 
 ***
 
@@ -64,28 +63,34 @@ Comming soon....
     + [OhmConnect](#ohmconnect)
   * [System](#system)
     + [Authentication](#authentication)
-    + [Firmware update](#firmware-update)
     + [Hardware reset](#hardware-reset)
-  * [Firmware Compile & Upload](#firmware-compile--upload)
-    + [Using PlatformIO](#using-platformio)
-      - [a. Install PlatformIO command line](#a-install-platformio-command-line)
-      - [b. And / Or use PlatformIO IDE](#b-and--or-use-platformio-ide)
-      - [1. Clone this repo](#1-clone-this-repo)
-      - [2. Compile & upload](#2-compile--upload)
-    + [Using Arduino IDE](#using-arduino-ide)
-      - [1. Install ESP for Arduino with Boards Manager](#1-install-esp-for-arduino-with-boards-manager)
-      - [2. Compile and Upload](#2-compile-and-upload)
-    + [Troubleshooting Upload](#troubleshooting-upload)
-      - [Erase Flash](#erase-flash)
-      - [Fully erase ESP](#fully-erase-esp)
-  * [About](#about)
-  * [Licence](#licence)
+    + [Firmware update](#firmware-update)
+- [Development Guide](#development-guide)
+  * [Compiling and uploading firmware](#compiling-and-uploading-firmware)
+    + [Building GUI static assets](#building-the-gui-static-assets)
+    + [Compile and upload using PlatformIO](#compile-and-upload-using-platformio)
+      - [1. Install PlatformIO](#1-install-platformio)
+      - [2. Clone this repo](#2-clone-this-repo)
+      - [3. Compile & upload](#3-compile--upload)
+  * [Troubleshooting](#troubleshooting)
+    + [Uploading issues](#uploading-issues)
+    + [Fully erase ESP](#fully-erase-esp)
+    + [View serial debug](#view-serial-debug)
+- [About](#about)
+- [Licence](#licence)
 
 <!-- tocstop -->
 
 ***
 
 # User Guide
+
+# Hardware 
+
+Most ESP32 boards can be used (see platfromio.ini for full list of supported boards), however the two boards which are best supported and easiest to use are:
+
+- Adafruit Huzzah 32 
+- [Olimex ESP32 Gateway (Wired Ethernet)](docs/wired-ethernet.md)
 
 ## WiFi Setup
 
@@ -149,7 +154,7 @@ An [OpenEnergyMonitor solar PV energy monitor](https://guide.openenergymonitor.o
 - Integration with an OpenEnergyMonitor emonPi is straightforward:
   - Connect to emonPi MQTT server, [emonPi MQTT credentials](https://guide.openenergymonitor.org/technical/credentials/#mqtt) should be pre-populated
   - Enter solar PV generation / Grid (+I/-E) MQTT topic e.g. if solar PV is being monitored by emonPi CT channel 1 enter `emon/emonpi/power1`
-  - [MQTT lens Chrome extension](https://chrome.google.com/webstore/detail/mqttlens/hemojaaeigabkbcookmlgmdigohjobjm?hl=en) can be used to view MQTT data e.g. subscribe to `emon/#` for all OpenEnergyMonitor MQTT data. To lean more about MQTT see [MQTT section of OpenEnergyMonitor user guide](https://guide.openenergymonitor.org/technical/mqtt/)
+  - [MQTT lens Chrome extension](https://chrome.google.com/webstore/detail/mqttlens/hemojaaeigabkbcookmlgmdigohjobjm?hl=en) or [MQTT Explorer](http://mqtt-explorer.com/) tools can be used to view MQTT data e.g. subscribe to `emon/#` for all OpenEnergyMonitor MQTT data. To lean more about MQTT see [MQTT section of OpenEnergyMonitor user guide](https://guide.openenergymonitor.org/technical/mqtt/).
   - If using Grid +I/-E (positive import / negative export) MQTT feed ensure the notation positive import / negative export is correct, CT sensor can be physically reversed on the cable to invert the reading.
 
 ### Operation
@@ -187,9 +192,24 @@ Data can be posted using HTTP or HTTPS. For HTTPS the Emoncms server must suppor
 
 ### MQTT
 
+MQTT and MQTTS (secure) connections are supported for status and control. 
+
+At startup the following message is published with a retain flag to `openevse/announce/xxx` where `xxx` is the last 4 characters of the device ID. This message is useful for device discovery and contans the device hostname and IP address. 
+```
+{"state":"connected","id":"c44f330dxxad","name":"openevse-55ad","mqtt":"emon/openevse-55ad","http":"http://192.168.1.43/"}
+```
+
+For device descovery you should subscribe with a wild card to `openevse/announce/#`
+
+When the device disconnects from MQTT the same message is posted with `state":"disconnected"` (Last Will and Testament).
+
+All subsequent MQTT status updates will by default be be posted to `openevse-xxxx` where `xxxx` is the last 4 characters of the device ID. This base-topic can be changed via the MQTT service page. 
+
 #### OpenEVSE Status via MQTT
 
 OpenEVSE can post its status values (e.g. amp, wh, temp1, temp2, temp3, pilot, status) to an MQTT server. Data will be published as a sub-topic of base topic.E.g `<base-topic>/amp`. Data is published to MQTT every 30s.
+
+**The default `<base-topic>` is `openevse-xxxx` where `xxxx` is the last 4 characters of the device ID**
 
 MQTT setup is pre-populated with OpenEnergyMonitor [emonPi default MQTT server credentials](https://guide.openenergymonitor.org/technical/credentials/#mqtt).
 
@@ -238,6 +258,46 @@ e.g. `$OK`
 
 [See video demo of RAPI over MQTT](https://www.youtube.com/watch?v=tjCmPpNl-sA&t=101s)
 
+
+### HTTP API 
+
+Current status of the OpenEVSE in JSON format is available via: `http://openevse-xxx/status` e.g
+
+```
+{"mode":"STA","wifi_client_connected":1,"eth_connected":0,"net_connected":1,"srssi":-73,"ipaddress":"192.168.1.43","emoncms_connected":1,"packets_sent":22307,"packets_success":22290,"mqtt_connected":1,"ohm_hour":"NotConnected","free_heap":203268,"comm_sent":335139,"comm_success":335139,"rapi_connected":1,"amp":0,"pilot":32,"temp1":282,"temp2":-2560,"temp3":-2560,"state":254,"elapsed":3473,"wattsec":22493407,"watthour":51536,"gfcicount":0,"nogndcount":0,"stuckcount":0,"divertmode":1,"solar":390,"grid_ie":0,"charge_rate":7,"divert_update":0,"ota_update":0,"time":"2020-05-12T17:53:48Z","offset":"+0000"}
+``` 
+
+Current config of the OpenEVSE in JSON format is available via `http://openevse-xxx/config` e.g
+
+```
+{"firmware":"6.2.1.EU","protocol":"5.1.0","espflash":4194304,"version":"3.1.0.dev","diodet":0,"gfcit":0,"groundt":0,"relayt":0,"ventt":0,"tempt":0,"service":2,"scale":220,"offset":0,"ssid":"<SSID>","pass":"_DUMMY_PASSWORD","emoncms_enabled":true,"emoncms_server":"https://emoncms.org","emoncms_node":"emonevse","emoncms_apikey":"_DUMMY_PASSWORD","emoncms_fingerprint":"","mqtt_enabled":true,"mqtt_protocol":"mqtt","mqtt_server":"emonpi","mqtt_port":1883,"mqtt_reject_unauthorized":true,"mqtt_topic":"emon/openevse-55ad","mqtt_user":"emonpi","mqtt_pass":"_DUMMY_PASSWORD","mqtt_solar":"emon/solarpv/test","mqtt_grid_ie":"","mqtt_supported_protocols":["mqtt","mqtts"],"http_supported_protocols":["http","https"],"www_username":"open","www_password":"_DUMMY_PASSWORD","hostname":"openevse-55ad","time_zone":"Europe/Lisbon|WET0WEST,M3.5.0/1,M10.5.0","sntp_enabled":true,"sntp_host":"pool.ntp.org","ohm_enabled":false}
+```
+
+### HTTP Tesla API
+
+**IN DEVELOPMENT**
+
+V3.2 onwards includes a basic Tesla API integration. The HTTP API for this is as follows:
+
+Enter Tesla credentials and enable the feature: 
+
+`http://openevse-xxx/savetesla?user=TESLAUSER&pass=TESLAPASS&enable=true`
+
+Return a list of vehicles associated with the Tesla account e.g
+
+`http://openevse-xxx/teslaveh`
+
+e.g
+`
+{"count:"2,[{"id":"xxxx","name":"tesla1"},{"id":"xxxxx","name":"tesla2"}]}`
+
+Set the vehicle index to choose which vehicle to retrieve status.
+Note: The ID starts at zero so the first car will have vi=0
+
+`http://openevse-xxx/saveteslavi?vi=VEHICLEINDEX`
+
+The SoC and rated range of the Tesa vehicle is now displayed in JSON format via `/status`. 
+
 #### RAPI over HTTP
 
 RAPI (rapid API) commands can also be issued directly via a single HTTP request.
@@ -273,6 +333,7 @@ https://player.vimeo.com/video/119419875
 Ohm Key can be obtained by logging in to OhmConnect, enter Settings and locate the link in "Open Source Projects"
 Example: https://login.ohmconnect.com/verify-ohm-hour/OpnEoVse
 Key: OpnEoVse
+
 ## System
 
 ![system](docs/system.png)
@@ -286,7 +347,7 @@ Admin HTTP Authentication (highly recommended) can be enabled by saving admin co
 
 ### Hardware reset
 
-A Hardware reset can be made (all wifi and services config lost) by pressing and holding GPIO0 hardware button (on the Huzzah WiFi module) for 10s.
+A Hardware reset can be made (all WiFi and services config lost) by pressing and holding GPIO0 hardware button (on the Huzzah WiFi module) for 10s.
 
 *Note: Holding the GPIO0 button for 5s will but the WiFi unit into AP (access point) mode to allow the WiFi network to be changed without loosing all the service config*
 
@@ -294,73 +355,49 @@ A Hardware reset can be made (all wifi and services config lost) by pressing and
 
 See [OpenEVSE Wifi releases](https://github.com/OpenEVSE/ESP32_WiFi_v3.x/releases) for latest stable pre-compiled update releases.
 
-## Via Web Interface 
+#### Via Web Interface
 
-This is the easiest way to update, pre-compiled firmware files `.bin` can be uploaded via the web interface: System > Update. 
+This is the easiest way to update. Pre-compiled firmware `.bin` files can be uploaded via the web interface: System > Update.
 
-If for whatever reason the web-interface won't load it's possibel to updated the firmware via CURL:
+If for whatever reason the web-interface won't load it's possible to update the firmware via CURL:
 
 `curl -F 'file=@firmware.bin'  http://<IP-ADDRESS>/update && echo`
 
-## Via Network OTA
+#### Via Network OTA
 
-The firmware can also be updated via OTA over a local WiFi network usiong Arduino or Platformio
+The firmware can also be updated via OTA over a local WiFi network using PlatformIO:
 
 `platformio run -t upload --upload-port <IP-ADDRESS>`
 
-## Via USB Serial Programmer 
+#### Via USB Serial Programmer
 
-`esptool.py write_flash 0x000000 firmware.bin`
+On the command line using the [esptool.py utility](https://github.com/espressif/esptool):
 
-Or use esptool GUI (Pyflasher) avilable on windows/mac https://github.com/marcelstoer/nodemcu-pyflasher
+If flashing a new ESP32 flashing bootloader and partitions file is required: 
 
-### Firmware Compile & Upload
+`esptool.py --baud 921600 --before default_reset --after hard_reset write_flash -z --flash_mode dio --flash_freq 40m --flash_size detect 0x1000 bootloader.bin 0x8000 partitions.bin 0x10000 firmware.bin`
 
-If required firmware can also be uploaded via serial using USB to UART cable.
+Then successive uploads can just upload the firmware 
 
-The code for the ESP8266 can be compiled and uploaded using PlatformIO or Arduino IDE. We recommend PlatformIO for its ease of use.
+`esptool.py --baud 921600 --before default_reset --after hard_reset write_flash -z --flash_mode dio --flash_freq 40m --flash_size detect 0x10000 firmware.bin`
 
+Or with the [NodeMCU PyFlasher](https://github.com/marcelstoer/nodemcu-pyflasher) GUI, available with pre-built executable files for windows/mac.
 
-### Compile & Upload Using PlatformIO
+# Development guide
 
-For more detailed ESP8266 Arduino core specific PlatfomIO notes see: https://github.com/esp8266/Arduino#using-platformio
+## Compiling and uploading firmware
 
-#### a. Install PlatformIO command line
+It is necessary to download and build the static web assets for the GUI before compiling and uploading to the ESP.
 
-The easiest way if running Linux is to install using the install script. See [PlatformIO installation docs](http://docs.platformio.org/en/latest/installation.html#installer-script). Or PlatformIO IDE can be used :
+### Building the GUI static assets
 
-`$ sudo python -c "$(curl -fsSL https://raw.githubusercontent.com/platformio/platformio/master/scripts/get-platformio.py)"`
+The GUI static web assets are minified and compiled into the firmware using a combination of Webpack and a [custom python build script](scripts/extra_script.py).
 
-#### b. And / Or use PlatformIO IDE
+You will need Node.js and npm installed: https://nodejs.org/en/download/
 
-Standalone built on GitHub Atom IDE, or use PlatformIO Atom IDE plug-in if you already have Atom installed. The IDE is nice, easy and self-explanatory.
+In addition, the GUI is now maintained in a [separate repository](https://nodejs.org/en/download/package-manager/) and is included as a Git submodule.
 
-[Download PlatfomIO IDE](http://platformio.org/platformio-ide)
-
-#### 1. Clone this repo
-
-`$ git clone https://github.com/OpenEVSE/ESP8266_WiFi_v2.x`
-
-
-#### 2. Compile & upload
-
-- Put ESP into bootloader mode
-- On other ESP boards (Adafruit HUZZAH) press and hold `boot` button then press `reset`, red LED should light dimly to indicate bootloader mode.
-- Compile and upload using platformIO
-
-```
-pio run -t upload
-```
-
-*To enable to OTA upload first upload via serial using the dev environment, this enables to OTA enable build flag. See `platformio.ino*
-
-*Note: uploading SPIFFS is no longer required since web resources are [now embedded in the firmware](https://github.com/OpenEVSE/ESP8266_WiFi_v2.x/pull/87)
-
-### Building the GUI
-
-The GUI files are minified and compiled into the firmware using a combination of Webpack and a custom build script. You will also need Node.JS and NPM installed.
-
-In addition the GUI is now maintained in a separate repository and included as a Git submodule. If the `gui` directory is empty use the following to retrieve the GUI source and fetch the dependencies.
+If the `gui` directory is empty, use the following to retrieve the GUI source and fetch the dependencies:
 
 ```shell
 git submodule update --init
@@ -368,27 +405,54 @@ cd gui
 npm install
 ```
 
-To 'build' the GUI use the following:
+To 'build' the GUI static assets, run the following from the `gui` directory:
 
 ```shell
-cd gui
 npm run build
 ```
 
-You can then just compile and upload as above.
+Now you are ready to compile and upload to the ESP32.
 
-For more details see the [GUI documentation](https://github.com/OpenEVSE/openevse_wifi_gui/blob/master/readme.md)
+### Compile and upload using PlatformIO
+
+For info on the Arduino core for the ESP32 using PlatformIO, see: https://github.com/espressif/arduino-esp32/blob/master/docs/platformio.md
+
+#### 1. Install PlatformIO
+
+PlatformIO can be installed as a command line utility (PlatformIO Core), a standalone IDE (PlatformIO IDO) or as an integration into other popular IDEs. Follow the [installation instructions](https://platformio.org/install).
+
+#### 2. Clone this repo
+
+`$ git clone https://github.com/OpenEVSE/ESP32_WiFi_v3.x`
+
+#### 3. Compile & upload
+
+- If necessary, put the ESP into bootloader mode. See [documentation on boot mode selection here](https://github.com/espressif/esptool/wiki/ESP32-Boot-Mode-Selection).
+  - Some boards handle entering bootloader mode automatically. On other ESP boards, like the Adafruit HUZZAH 32 Breakout board, you have to press and hold a `boot` button then press a `reset` button, as [seen here](https://learn.adafruit.com/huzzah32-esp32-breakout-board/using-with-arduino-ide#blink-test-3-13).
+
+Compile and upload using PlatformIO. To compile against the default env (for the ESP_WROVER_KIT, [docs](https://docs.platformio.org/en/latest/boards/espressif32/esp-wrover-kit.html)), run:
+
+```
+pio run -t upload
+```
+
+If you are using a different development board, you can specify one of the envs setup in `platformio.ini`, for example:
+
+```
+pio run -e openevse_huzzah32_idf -t upload
+```
+
+*To enable OTA updates, first upload via serial using the dev environment. This enables OTA enable build flag*
 
 ***
 
-### Troubleshooting
+## Troubleshooting
 
+### Uploading issues
 
-#### Uploading issues
-
-- Double check device is in bootloder mode
+- Double check device is in bootloader mode
 - Try reducing the upload ESP baudrate
-- Erase flash: If you are experiencing ESP hanging in a reboot loop after upload it may be that the ESP flash has remnants of previous code (which may have the used the ESP memory in a different way). The ESP flash can be fully erased using [esptool](https://github.com/themadinventor/esptool). With the unit in bootloader mode run:
+- Erase flash: If you are experiencing ESP hanging in a reboot loop after upload it may be that the ESP flash has remnants of previous code (which may have the used the ESP memory in a different way). The ESP flash can be fully erased using [esptool](https://github.com/espressif/esptool). With the unit in bootloader mode run:
 
 `$ esptool.py erase_flash`
 
@@ -402,13 +466,13 @@ Erasing flash (this may take a while)...
 Erase took 8.0 seconds
 ```
 
-**Fully erase ESP**
+### Fully erase ESP
 
 To fully erase all memory locations on an ESP-12 (4Mb) we need to upload a blank file to each memory location
 
 `esptool.py write_flash 0x000000 blank_1MB.bin 0x100000 blank_1MB.bin 0x200000 blank_1MB.bin 0x300000 blank_1MB.bin`
 
-#### View serial debug
+### View serial debug
 
 To help debug it may be useful to enable serial debug output. To do this upload using `openevse_dev` environment e.g.
 
@@ -420,7 +484,7 @@ To change to use serial0 (the main ESP's serial port) change `-DDEBUG_PORT=Seria
 
 ***
 
-## About
+# About
 
 Collaboration of [OpenEnegyMonitor](http://openenergymonitor.org) and [OpenEVSE](https://openevse.com).
 
@@ -434,6 +498,6 @@ Contributions by:
 - @lincomatic
 - @joverbee
 
-## Licence
+# Licence
 
 GNU General Public License (GPL) V3
